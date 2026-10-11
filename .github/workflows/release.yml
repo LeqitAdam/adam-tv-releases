@@ -1,0 +1,70 @@
+name: Android-Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version, z. B. 0.2.0"
+        required: true
+      ref:
+        description: "Branch oder Tag im Quell-Repo"
+        default: main
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Quellcode holen (privates Repo, Deploy-Key)
+        uses: actions/checkout@v4
+        with:
+          repository: LeqitAdam/adam-tv
+          ref: ${{ inputs.ref }}
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          path: src
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Signaturschlüssel ablegen
+        run: |
+          mkdir -p ~/.config/adam-tv
+          echo "${{ secrets.ANDROID_KEYSTORE_B64 }}" | base64 -d > ~/.config/adam-tv/android.keystore
+          cat > ~/.config/adam-tv/android-keystore.properties <<PROPS
+          storeFile=$HOME/.config/adam-tv/android.keystore
+          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.KEY_ALIAS }}
+          keyPassword=${{ secrets.KEY_PASSWORD }}
+          PROPS
+
+      - name: Version eintragen
+        working-directory: src/android
+        run: |
+          V="${{ inputs.version }}"
+          IFS=. read -r MA MI PA <<< "$V"
+          CODE=$((MA * 10000 + MI * 100 + PA))
+          sed -i "s/versionCode = [0-9]*/versionCode = $CODE/; s/versionName = \"[^\"]*\"/versionName = \"$V\"/" app/build.gradle.kts
+          grep -E "versionCode|versionName" app/build.gradle.kts
+
+      - name: Tests und Release-Build
+        working-directory: src/android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon testDebugUnitTest assembleRelease
+
+      - name: Release anlegen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="${{ inputs.version }}"
+          cp src/android/app/build/outputs/apk/release/app-release.apk "adam-tv-android-$V.apk"
+          sha256sum "adam-tv-android-$V.apk" > "adam-tv-android-$V.apk.sha256"
+          gh release create "android-v$V" --repo "$GITHUB_REPOSITORY" --title "adam-tv Android $V" \
+            --notes "Android-TV-App adam-tv $V. Installation siehe README." \
+            "adam-tv-android-$V.apk" "adam-tv-android-$V.apk.sha256"
