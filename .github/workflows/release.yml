@@ -31,6 +31,8 @@ jobs:
           java-version: "21"
 
       - uses: android-actions/setup-android@v3
+        with:
+          packages: "platforms;android-37.0 build-tools;37.0.0 platform-tools"
 
       - name: Signaturschlüssel ablegen
         run: |
